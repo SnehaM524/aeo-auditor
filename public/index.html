@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AEO Auditor</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,400;9..144,900&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'DM Mono', monospace; background: #0E0E0C; color: #EDEAE0; }
+  .wrap { max-width: 940px; margin: 0 auto; padding: 40px 28px; }
+  .head { border-bottom: 1px solid #3A3A32; padding-bottom: 20px; margin-bottom: 26px; }
+  .kicker { font-size: 10px; letter-spacing: 0.2em; color: #C9A84A; margin-bottom: 8px; }
+  h1 { font-family: 'Fraunces', serif; font-size: 38px; font-weight: 900; margin-bottom: 8px; }
+  .sub { font-size: 12px; color: #8A8A7E; line-height: 1.6; max-width: 640px; }
+  label { font-size: 10px; color: #8A8A7E; display: block; margin-bottom: 6px; }
+  textarea, input { font-family: 'DM Mono', monospace; background: #1A1A16; border: 1px solid #3A3A32; color: #EDEAE0; padding: 10px 12px; border-radius: 4px; font-size: 12px; width: 100%; }
+  textarea:focus, input:focus { outline: none; border-color: #C9A84A; }
+  .btn { font-family: 'DM Mono', monospace; cursor: pointer; border-radius: 4px; padding: 11px 22px; font-size: 12px; font-weight: 500; border: none; }
+  .gold { background: #C9A84A; color: #0E0E0C; }
+  .red { background: #C0392B; color: #fff; }
+  .pulse { animation: p 1.4s infinite; } @keyframes p { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .card { background: #161613; border: 1px solid #2A2A24; border-radius: 8px; margin-bottom: 10px; overflow: hidden; }
+  .cardhead { display: flex; align-items: center; padding: 16px 20px; cursor: pointer; gap: 16px; }
+  .rank { font-family: 'Fraunces', serif; font-size: 22px; font-weight: 900; color: #5A5A50; width: 30px; }
+  .bar { height: 8px; background: #0E0E0C; border-radius: 4px; overflow: hidden; margin-bottom: 4px; }
+  .barfill { height: 100%; background: #C9A84A; }
+  .qrow { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid #1F1F1A; }
+  .badge { display: inline-block; color: #fff; font-size: 10px; padding: 2px 7px; border-radius: 3px; height: fit-content; }
+  .err { background: #2A1512; border: 1px solid #C0392B; border-radius: 6px; padding: 14px 18px; margin-bottom: 24px; font-size: 12px; color: #E8A89E; line-height: 1.6; }
+  .empty { text-align: center; padding: 40px; color: #5A5A50; font-size: 12px; border: 1px dashed #2A2A24; border-radius: 8px; }
+  .foot { margin-top: 40px; padding-top: 20px; border-top: 1px solid #2A2A24; font-size: 10px; color: #5A5A50; line-height: 1.7; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+  .pwrow { margin-bottom: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div class="kicker">AUTOMATED AI VISIBILITY INDEX</div>
+    <h1>AEO Auditor</h1>
+    <p class="sub">Paste a list of companies. The system auto-generates buyer-intent queries for each, runs them through an AI answer engine, evaluates brand visibility, and builds a ranked index. Fully automated &mdash; you only provide the company list.</p>
+  </div>
+
+  <div class="pwrow">
+    <label>ACCESS PASSWORD</label>
+    <input id="pw" type="password" placeholder="Enter the site password" />
+  </div>
+
+  <label>COMPANIES &nbsp;<span style="color:#5A5A50">(one per line: Company | Category | Buyer | Competitors)</span></label>
+  <textarea id="batch" rows="6" style="margin-bottom:14px;line-height:1.7">ActivelyAI | AI sales agents | revenue teams and sales leaders | Clay, 11x, Artisan
+Clay | AI sales prospecting | revenue teams | ActivelyAI, 11x, Apollo
+11x | AI sales agents | sales teams | ActivelyAI, Clay, Artisan</textarea>
+
+  <div style="display:flex;gap:14px;align-items:flex-end;margin-bottom:24px;flex-wrap:wrap">
+    <div style="width:180px">
+      <label>QUERIES PER COMPANY</label>
+      <input id="qper" type="number" min="2" max="12" value="5" />
+    </div>
+    <button class="btn gold" id="runbtn" onclick="runBatch()">&#9654; Run Index</button>
+    <span class="pulse" id="status" style="font-size:11px;color:#8A8A7E"></span>
+  </div>
+
+  <div id="error"></div>
+  <div id="results"><div class="empty">Paste your company list above and run the index.</div></div>
+
+  <div class="foot">Pipeline per company: AI generates neutral buyer queries &rarr; AI answers each as an answer engine &rarr; AI evaluates and scores brand visibility &rarr; results roll up into a ranked index. Click any company to expand its query-level breakdown.</div>
+</div>
+
+<script>
+const SCORE_COLORS = { 0:"#C0392B", 1:"#D68910", 2:"#2980B9", 3:"#1E8449" };
+const SCORE_LABELS = { 0:"Invisible", 1:"Weak", 2:"Present", 3:"Dominant" };
+let stop = false;
+
+async function callClaude(messages, maxTokens=1200) {
+  const pw = document.getElementById("pw").value;
+  const r = await fetch("/api/claude", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-site-password": pw },
+    body: JSON.stringify({ messages, max_tokens: maxTokens })
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(()=>({error:"status "+r.status}));
+    throw new Error(e.error || ("status "+r.status));
+  }
+  const d = await r.json();
+  return d.content.map(b => b.type==="text"?b.text:"").filter(Boolean).join("\n");
+}
+
+async function generateQueries(company, category, buyer, competitors, n) {
+  const raw = await callClaude([{ role:"user", content:
+    `Generate ${n} realistic buyer-intent search queries someone would type into an AI assistant when researching ${category} tools. Buyer: ${buyer}. Spread across: category-defining, use-case specific, competitive comparison (competitors: ${competitors}), problem-led, switching. Do NOT mention "${company}" by name. Respond ONLY with a JSON array of ${n} strings, no markdown.` }]);
+  try { return JSON.parse(raw.replace(/```json|```/g,"").trim()).slice(0,n); }
+  catch(e){ return [`What's the best ${category} tool in 2026?`]; }
+}
+
+async function auditQuery(query, company, competitors) {
+  const answer = await callClaude([{ role:"user", content:
+    `You are an AI assistant helping research software tools. Answer naturally the way ChatGPT would, recommending specific named products. Under 220 words.\n\nQuestion: ${query}` }]);
+  const evalRaw = await callClaude([{ role:"user", content:
+    `Audit brand visibility.\nTARGET: ${company}\nCOMPETITORS: ${competitors}\n\nAnswer:\n"""\n${answer}\n"""\n\nRespond ONLY with JSON, no markdown:\n{"mentioned":true/false,"score":0|1|2|3,"position":"where it ranked","notes":"one short sentence","winners":"if absent, top brands that won; else empty"}\nRubric: 3=top pick,2=mid-list accurate,1=generic/buried,0=absent` }]);
+  try { return Object.assign({ query }, JSON.parse(evalRaw.replace(/```json|```/g,"").trim())); }
+  catch(e){ return { query, mentioned:false, score:0, position:"parse error", notes:"parse error", winners:"" }; }
+}
+
+function parseBatch() {
+  return document.getElementById("batch").value.split("\n").map(l=>l.trim()).filter(Boolean).map(line=>{
+    const p = line.split("|").map(s=>(s||"").trim());
+    return { company:p[0], category:p[1]||"tools", buyer:p[2]||"business users", competitors:p[3]||"" };
+  }).filter(c=>c.company);
+}
+
+function render(companyResults, expanded) {
+  const el = document.getElementById("results");
+  if (!companyResults.length) { el.innerHTML = '<div class="empty">Running...</div>'; return; }
+  let html = '<div style="font-size:10px;letter-spacing:0.15em;color:#C9A84A;margin-bottom:14px">VISIBILITY INDEX &mdash; RANKED</div>';
+  companyResults.forEach((c, i) => {
+    html += `<div class="card">
+      <div class="cardhead" onclick="toggle('${c.company}')">
+        <div class="rank">${i+1}</div>
+        <div style="flex:1"><div style="font-size:15px;font-weight:500">${c.company}</div><div style="font-size:11px;color:#8A8A7E">${c.category}</div></div>
+        <div style="font-size:10px;color:#8A8A7E">MENTION ${c.mention}%</div>
+        <div style="width:120px"><div class="bar"><div class="barfill" style="width:${c.score}%"></div></div><div style="font-size:10px;color:#C9A84A;text-align:right">${c.score}% visible</div></div>
+        <div style="color:#5A5A50;font-size:12px">${expanded[c.company]?"&#9662;":"&#9656;"}</div>
+      </div>`;
+    if (expanded[c.company]) {
+      html += '<div style="border-top:1px solid #2A2A24;padding:8px 20px 16px">';
+      c.rows.forEach(r => {
+        html += `<div class="qrow"><div class="badge" style="background:${SCORE_COLORS[r.score]||'#3A3A32'}">${r.score}</div>
+          <div style="flex:1"><div style="font-size:12px;margin-bottom:3px">${r.query}</div>
+          <div style="font-size:11px;color:#8A8A7E">${r.notes||""}${(!r.mentioned&&r.winners)?' &middot; <span style="color:#C0392B">Won by: '+r.winners+'</span>':''}</div></div>
+          <div style="font-size:10px;color:#5A5A50;white-space:nowrap">${r.position||""}</div></div>`;
+      });
+      html += '</div>';
+    }
+    html += '</div>';
+  });
+  el.innerHTML = html;
+}
+
+let _state = { companyResults: [], expanded: {} };
+function toggle(co){ _state.expanded[co] = !_state.expanded[co]; render(_state.companyResults, _state.expanded); }
+
+async function runBatch() {
+  stop = false;
+  document.getElementById("runbtn").className = "btn red";
+  document.getElementById("runbtn").innerHTML = "&#9632; Stop";
+  document.getElementById("runbtn").onclick = ()=>{ stop = true; };
+  document.getElementById("error").innerHTML = "";
+  _state = { companyResults: [], expanded: {} };
+  const companies = parseBatch();
+  const out = [];
+  try {
+    for (let c=0; c<companies.length; c++) {
+      if (stop) break;
+      const co = companies[c];
+      document.getElementById("status").textContent = `[${c+1}/${companies.length}] Generating queries for ${co.company}...`;
+      const qs = await generateQueries(co.company, co.category, co.buyer, co.competitors, Number(document.getElementById("qper").value));
+      const rows = [];
+      for (let q=0; q<qs.length; q++) {
+        if (stop) break;
+        document.getElementById("status").textContent = `[${c+1}/${companies.length}] ${co.company} — query ${q+1}/${qs.length}`;
+        rows.push(await auditQuery(qs[q], co.company, co.competitors));
+      }
+      const sc = rows.length ? Math.round((rows.reduce((s,r)=>s+(r.score||0),0)/(rows.length*3))*100) : 0;
+      const mr = rows.length ? Math.round((rows.filter(r=>r.mentioned).length/rows.length)*100) : 0;
+      out.push(Object.assign({}, co, { score: sc, mention: mr, rows }));
+      _state.companyResults = out.slice().sort((a,b)=>b.score-a.score);
+      render(_state.companyResults, _state.expanded);
+    }
+  } catch(e) {
+    document.getElementById("error").innerHTML = '<div class="err">API call failed: '+String(e.message||e)+'. Check that your password is correct and your API key is set in Vercel.</div>';
+  }
+  document.getElementById("status").textContent = "";
+  document.getElementById("runbtn").className = "btn gold";
+  document.getElementById("runbtn").innerHTML = "&#9654; Run Index";
+  document.getElementById("runbtn").onclick = runBatch;
+}
+</script>
+</body>
+</html>
