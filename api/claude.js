@@ -40,10 +40,7 @@ export default async function handler(req, res) {
       }),
     });
     const data = await response.json();
-    if (!response.ok) {
-      console.log("ANTHROPIC ERROR:", JSON.stringify(data));
-    }
-return res.status(response.status).json(data);
+    return res.status(response.status).json(data);
   } catch (e) {
     return res.status(500).json({ error: String(e) });
   }
